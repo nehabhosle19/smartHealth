@@ -10,7 +10,8 @@ COPY alembic.ini docker-entrypoint.sh ./
 COPY migrations ./migrations
 COPY smarthealth ./smarthealth
 COPY static ./static
-RUN chmod +x docker-entrypoint.sh \
+RUN sed -i 's/\r$//' docker-entrypoint.sh \
+    && chmod +x docker-entrypoint.sh \
     && useradd --system --uid 10001 --no-create-home app
 USER app
 

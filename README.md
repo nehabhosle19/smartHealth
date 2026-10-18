@@ -45,7 +45,8 @@ switch language (top right) → log in as `staff1` and report today's stock.
 | **Code quality** | Pure, typed analytics module separated from I/O; Pydantic validation; ruff-clean; Alembic migrations; documented config |
 | **Security** | PBKDF2 passwords, HttpOnly SameSite cookies + CSRF header, role & per-facility authorisation, login throttling, strict input bounds, CSP/HSTS, audit log, fail-fast production config, dependency audit in CI – see [SECURITY.md](SECURITY.md) |
 | **Efficiency** | ~6 bulk queries per dashboard (no N+1), indexed columns, O(n) forecasting, no frontend build step or heavy libraries |
-| **Testing** | 75 automated tests (analytics invariants, security primitives, API RBAC/validation/i18n, CLI, config) + CI on SQLite *and* PostgreSQL |
+| **Testing** | 110 automated tests at **98 % backend coverage** (CI fails below 90 %): analytics invariants, security primitives, API RBAC/validation/i18n, CLI, config, race conditions, translation parity, plus real-browser journeys (Playwright) and frontend unit tests; CI runs on SQLite *and* PostgreSQL |
+| **Accessibility** | Automated **axe-core WCAG 2.1 A/AA scan in CI** (login, dashboard, forecast, forms; light *and* dark) with zero violations; contrast-safe colour tokens; skip link, landmarks, one `<h1>` per view, `aria-current` navigation, focus moved to content on navigation, alert vs status live regions, every chart also available as a data table, `lang` set per language, reduced-motion and forced-colors support |
 
 ## Tech stack
 Python 3.12 · FastAPI · SQLAlchemy 2 · PostgreSQL / SQLite · Alembic · vanilla JS + Canvas (no build step) · Docker · GitHub Actions
@@ -61,12 +62,15 @@ Python 3.12 · FastAPI · SQLAlchemy 2 · PostgreSQL / SQLite · Alembic · vani
 ## Quick start (development, 2 minutes)
 ```bash
 pip install -r requirements-dev.txt
+python -m playwright install chromium          # once, for the browser/accessibility tests
 python -m smarthealth.manage seed-demo          # fake data; prints demo logins once
 python -m uvicorn smarthealth.app:create_app --factory
 # open http://127.0.0.1:8000  -> admin / staff1 … staff8
-python -m pytest                                 # 75 tests
+python -m pytest                                 # 102 tests (unit, API, browser + accessibility)
+node --test tests/js/frontend.test.mjs           # 8 frontend tests
 ```
 Set `SMARTHEALTH_DEMO_PASSWORD` before `seed-demo` to choose the demo password.
+Hosting a demo without shell access? Set `SMARTHEALTH_DEMO_PASSWORD` on the host — see [DEPLOYMENT.md](DEPLOYMENT.md#demo--hackathon-hosting-without-a-shell-eg-free-render).
 
 ## Production
 See **[DEPLOYMENT.md](DEPLOYMENT.md)** (Docker + PostgreSQL, Render/Railway/VPS) and **[SECURITY.md](SECURITY.md)**.
@@ -92,7 +96,7 @@ smarthealth/
   manage.py        admin CLI (create admin/staff, facilities, medicines, passwords)
 migrations/        Alembic migrations (run automatically by the Docker entrypoint)
 static/            dependency-free frontend as ES modules (js/state, dom, api, components, charts, views)
-tests/             75 tests: analytics, security, API/RBAC/validation/i18n, presenters, CLI, config
+tests/             102 Python tests (incl. tests/e2e browser + axe accessibility) and tests/js frontend tests
 ```
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the request flow and design decisions.
 

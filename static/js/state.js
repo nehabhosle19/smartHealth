@@ -20,4 +20,5 @@ export function notice(message, isError) {
   const el = $("notice");
   el.textContent = message || "";
   el.className = isError ? "bad" : "";
+  el.setAttribute("role", isError ? "alert" : "status");  // errors interrupt screen readers, successes do not
 }

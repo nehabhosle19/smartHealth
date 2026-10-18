@@ -1,5 +1,8 @@
 -r requirements.txt
 pytest==9.0.2
+pytest-cov==7.1.0
 httpx==0.28.1
 ruff==0.17.1
+playwright==1.51.0          # browser tests
+axe-playwright-python==0.1.8  # accessibility scans (axe-core)
 pip-audit

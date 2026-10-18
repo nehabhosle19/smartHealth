@@ -26,11 +26,12 @@ const currentTabs = () => TABS[state.session.role];
 async function render(background = false) {
   const tabs = currentTabs();
   if (!tabs.some(([id]) => id === state.tab)) state.tab = tabs[0][0];
-  const [, , , view] = tabs.find(([id]) => id === state.tab);
+  const [, titleKey, , view] = tabs.find(([id]) => id === state.tab);
+  $("page-title").textContent = tr(titleKey);
 
   $("tabs").replaceChildren(...tabs.map(([id, label, iconName]) => h("button", {
-    "aria-selected": String(id === state.tab),
-    onclick: () => { state.tab = id; render(); },
+    ...(id === state.tab ? { "aria-current": "page" } : {}),
+    onclick: async () => { state.tab = id; await render(); $("main").focus({ preventScroll: true }); },
   }, icon(iconName), tr(label))));
 
   // Build into a detached node and attach only if no newer render started meanwhile,
@@ -140,7 +141,7 @@ function init() {
   $("banner").addEventListener("click", () => { $("banner").hidden = true; });
   for (const id of ["lang", "lang-login"]) {
     const select = $(id);
-    for (const [code, name] of Object.entries(LANGS)) select.append(h("option", { value: code }, name));
+    for (const [code, name] of Object.entries(LANGS)) select.append(h("option", { value: code, lang: code }, name));
     select.addEventListener("change", (event) => setLang(event.target.value));
   }
 

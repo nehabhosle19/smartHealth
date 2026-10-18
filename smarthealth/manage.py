@@ -7,6 +7,7 @@
     python -m smarthealth.manage set-password --username rampur.staff
     python -m smarthealth.manage deactivate --username rampur.staff
     python -m smarthealth.manage seed-demo        # fake data; refused in production
+    python -m smarthealth.manage bootstrap-demo   # idempotent demo setup from SMARTHEALTH_DEMO_PASSWORD
 
 Passwords are read from a hidden prompt, or from SMARTHEALTH_PASSWORD for automation.
 """
@@ -169,6 +170,18 @@ def _cmd_seed_demo(db: Session, args) -> str:
     return "\n".join(f"{user:10s} {password}" for user, password in credentials.items())
 
 
+def _cmd_bootstrap_demo(db: Session, args) -> str:
+    """Create or refresh demo data using SMARTHEALTH_DEMO_PASSWORD (for hosts without a shell)."""
+    if config.IS_PROD:
+        raise CliError("refusing to load demo data when SMARTHEALTH_ENV=production")
+    password = os.getenv("SMARTHEALTH_DEMO_PASSWORD")
+    if not password:
+        raise CliError("set SMARTHEALTH_DEMO_PASSWORD to the password the demo accounts should use")
+    from .seed import bootstrap_demo
+
+    return bootstrap_demo(db, config.local_today(), password)
+
+
 def _argument(*flags: str, **kwargs):
     return (flags, kwargs)
 
@@ -187,6 +200,7 @@ COMMANDS: dict[str, tuple[Callable, list]] = {
     "activate": (_cmd_activate, [USERNAME]),
     "list-facilities": (_cmd_list_facilities, []),
     "seed-demo": (_cmd_seed_demo, []),
+    "bootstrap-demo": (_cmd_bootstrap_demo, []),
 }
 
 

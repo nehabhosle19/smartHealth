@@ -10,3 +10,5 @@ venv/
 .env.*
 !.env.example
 .claude/
+.coverage
+htmlcov/

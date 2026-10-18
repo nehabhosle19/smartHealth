@@ -80,3 +80,7 @@ Object.assign(I18N.ta, {
 Object.assign(I18N.en, { status: "Status" });
 Object.assign(I18N.hi, { status: "स्थिति" });
 Object.assign(I18N.ta, { status: "நிலை" });
+
+Object.assign(I18N.en, { skip: "Skip to main content", view_data: "View chart data as a table", date: "Date", chart_for: "Chart data" });
+Object.assign(I18N.hi, { skip: "मुख्य सामग्री पर जाएँ", view_data: "चार्ट का डेटा तालिका में देखें", date: "तारीख", chart_for: "चार्ट डेटा" });
+Object.assign(I18N.ta, { skip: "முதன்மை உள்ளடக்கத்திற்குச் செல்", view_data: "விளக்கப்பட தரவை அட்டவணையாகப் பார்", date: "தேதி", chart_for: "விளக்கப்பட தரவு" });

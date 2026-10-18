@@ -6,14 +6,16 @@ Passwords are random and printed once (or set SMARTHEALTH_DEMO_PASSWORD for a fi
 from __future__ import annotations
 
 import random
+import re
 import secrets
 from datetime import date, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from . import config
 from .models import (
+    Base,
     BedStatus,
     DoctorAttendance,
     Facility,
@@ -23,7 +25,7 @@ from .models import (
     TestAvailability,
     User,
 )
-from .security import hash_password
+from .security import hash_password, verify_password
 
 DISTRICT = "Demo District"
 FACILITIES = [  # name, type, lat, lon, beds
@@ -123,6 +125,40 @@ def _test_audits(db: Session, facility: Facility, today: date) -> None:
     for test in TESTS:
         db.add(TestAvailability(facility_id=facility.id, test_name=test,
                                 available=test not in missing, audited_on=today))
+
+
+DEMO_USERNAME = re.compile(r"^(admin|staff\d+)$")
+DEMO_STALE_AFTER_DAYS = 1  # demo data older than this is regenerated so charts never look abandoned
+
+
+def _sync_demo_passwords(db: Session, password: str) -> int:
+    """Make every demo account use `password`; returns how many were changed."""
+    changed = 0
+    for user in db.scalars(select(User)):
+        if DEMO_USERNAME.match(user.username) and not verify_password(password, user.password_hash):
+            user.password_hash = hash_password(password, config.PBKDF2_ITERATIONS)
+            changed += 1
+    db.commit()
+    return changed
+
+
+def bootstrap_demo(db: Session, today: date, password: str) -> str:
+    """Idempotent demo setup for hosts without shell access (set SMARTHEALTH_DEMO_PASSWORD).
+
+    * no data yet, or data older than a day  -> (re)create the demo district from scratch
+    * data is current                        -> only make sure the demo password matches
+    """
+    engine = db.get_bind()
+    Base.metadata.create_all(engine)
+    latest = db.scalar(select(func.max(StockLog.day)))
+    if latest is not None and latest >= today - timedelta(days=DEMO_STALE_AFTER_DAYS):
+        return f"demo data is current; {_sync_demo_passwords(db, password)} password(s) updated"
+
+    db.rollback()  # release the connection so DROP TABLE is not blocked by our own transaction
+    Base.metadata.drop_all(engine)
+    Base.metadata.create_all(engine)
+    seed(db, today, password=password)
+    return f"demo data created for {today.isoformat()}"
 
 
 def seed(db: Session, today: date, days: int = 30, password: str | None = None,

@@ -1,6 +1,7 @@
 // Dependency-free canvas line charts.
-import { card } from "./components.js";
+import { card, table } from "./components.js";
 import { cssVar, h } from "./dom.js";
+import { tr } from "./state.js";
 
 const PAD = { left: 40, right: 12, top: 12, bottom: 26 };
 const GRID_LINES = 4;
@@ -73,6 +74,14 @@ function drawSeries(ctx, series, { x, y, baseline, top }) {
   ctx.setLineDash([]);
 }
 
+/** Text alternative to the canvas: the same numbers as a table (a canvas is invisible to assistive tech). */
+function dataTable(labels, series, legend) {
+  const names = series.map((_, i) => (legend && legend[i] ? legend[i][1] : tr("chart_for")));
+  const rows = labels.map((label, i) => [label, ...series.map((s) => s.values[i] ?? "–")]);
+  return h("details", { class: "data-table" }, h("summary", {}, tr("view_data")),
+    table([tr("date"), ...names], rows));
+}
+
 /** A titled card containing a chart (and optional legend of [color, text, dashed] entries). */
 export function chartCard(title, labels, series, legend) {
   const canvas = h("canvas", { role: "img", "aria-label": title });
@@ -82,7 +91,7 @@ export function chartCard(title, labels, series, legend) {
     if (dashed) swatch.style.opacity = ".6";
     return h("span", {}, swatch, text);
   }));
-  const el = card(title, legendEl, canvas);
+  const el = card(title, legendEl, canvas, dataTable(labels, series, legend));
 
   // A canvas needs a laid-out size, so draw once it is attached; give up if it never is.
   let frames = 0;

@@ -44,6 +44,19 @@ Migrations run automatically on every start (`alembic upgrade head`).
 5. Open the service **Shell** and create the first admin:
    `python -m smarthealth.manage create-admin --username district.admin`
 
+## Demo / hackathon hosting without a shell (e.g. free Render)
+Shell access is a paid feature on some hosts, so the container can set up the demo for you:
+
+1. Set `SMARTHEALTH_ENV=development` (demo data is refused in production) and
+   `SMARTHEALTH_DEMO_PASSWORD=<the password you want the demo accounts to use>`.
+2. Save — the service redeploys and, on every start, the entrypoint runs `manage.py bootstrap-demo`:
+   * empty database, or data older than a day -> the demo district is (re)created with fresh dates;
+   * data is current -> only the demo accounts' password is synced to the variable.
+3. Log in as `admin` / `staff1`…`staff8` with that password. **To change or recover the password,
+   just edit the variable** and save; nothing else to run.
+
+Real (non-demo) accounts are never touched by this. Do not use it for real data.
+
 ## Loading your real data
 ```bash
 python -m smarthealth.manage add-facility --name "PHC Rampur" --type PHC --district Sitapur --lat 27.50 --lon 80.70
