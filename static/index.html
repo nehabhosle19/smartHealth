@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Smart Health</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="login-view" class="login">
+    <div class="hero">
+      <div class="logo-lg" id="hero-logo"></div>
+      <h1 data-i18n="title">Smart Health</h1>
+      <p data-i18n="tagline">Real-time health centre management for every PHC and CHC in your district.</p>
+      <ul class="hero-points">
+        <li data-i18n="pt_stock">Early stock-out warnings</li>
+        <li data-i18n="pt_forecast">AI demand forecasts</li>
+        <li data-i18n="pt_redistribute">Smart redistribution</li>
+        <li data-i18n="pt_flag">Automatic centre flagging</li>
+      </ul>
+    </div>
+    <form id="login-form" class="login-card">
+      <div class="login-top"><select id="lang-login" class="lang" aria-label="Language"></select></div>
+      <h2 data-i18n="login">Sign in</h2>
+      <label><span data-i18n="username">Username</span>
+        <input name="username" autocomplete="username" required maxlength="64"></label>
+      <label><span data-i18n="password">Password</span>
+        <input name="password" type="password" autocomplete="current-password" required maxlength="256"></label>
+      <button type="submit" class="primary" data-i18n="login">Sign in</button>
+      <p id="login-error" class="error" role="alert"></p>
+    </form>
+  </div>
+
+  <div id="app-view" hidden>
+    <header class="topbar">
+      <div class="brand"><span id="brand-logo"></span><b data-i18n="title">Smart Health</b></div>
+      <nav id="tabs" aria-label="Main"></nav>
+      <div class="spacer"></div>
+      <span id="updated" class="muted"></span>
+      <select id="lang" class="lang" aria-label="Language"></select>
+      <button id="theme" class="icon-btn" aria-label="Toggle theme"></button>
+      <span id="who" class="chip"></span>
+      <button id="logout" class="ghost" data-i18n="logout">Log out</button>
+    </header>
+    <main>
+      <div id="banner" class="banner" role="alert" hidden></div>
+      <p id="notice" role="status"></p>
+      <div id="panel"></div>
+    </main>
+  </div>
+  <script src="i18n.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

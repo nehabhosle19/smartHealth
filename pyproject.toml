@@ -1,0 +1,16 @@
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+extend-exclude = ["migrations/versions"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "S", "UP"]
+ignore = ["B008",   # FastAPI Depends() in defaults is the idiom
+          "E701", "E702"]  # compact one-line argparse definitions in manage.py
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "S105", "S106"]
+"smarthealth/seed.py" = ["S311"]   # demo data uses non-crypto random on purpose
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

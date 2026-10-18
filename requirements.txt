@@ -1,0 +1,9 @@
+# Runtime dependencies, pinned for reproducible builds. Update deliberately (and run the tests).
+fastapi==0.143.3
+starlette==1.8.0
+uvicorn==0.54.0
+SQLAlchemy==2.1.5
+pydantic==2.14.1
+alembic==1.20.0
+psycopg[binary]==3.3.6
+tzdata==2026.5
