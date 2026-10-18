@@ -12,8 +12,8 @@
 
 | Role | Username | Password |
 |---|---|---|
-| District administrator | `admin` | `YOUR-DEMO-PASSWORD` |
-| Centre staff (PHC Aliganj…) | `staff1` … `staff8` | `YOUR-DEMO-PASSWORD` |
+| District administrator | `admin` | `Hack#Prompt@23$` |
+| Centre staff (PHC Aliganj…) | `staff1` … `staff8` | `Hack#Prompt@23$` |
 
 Demo data is fictional. Try: dashboard → flagged centres → stock-out warnings → redistribution →
 switch language (top right) → log in as `staff1` and report today's stock.
