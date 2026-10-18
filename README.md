@@ -45,7 +45,7 @@ switch language (top right) → log in as `staff1` and report today's stock.
 | **Code quality** | Pure, typed analytics module separated from I/O; Pydantic validation; ruff-clean; Alembic migrations; documented config |
 | **Security** | PBKDF2 passwords, HttpOnly SameSite cookies + CSRF header, role & per-facility authorisation, login throttling, strict input bounds, CSP/HSTS, audit log, fail-fast production config, dependency audit in CI – see [SECURITY.md](SECURITY.md) |
 | **Efficiency** | ~6 bulk queries per dashboard (no N+1), indexed columns, O(n) forecasting, no frontend build step or heavy libraries |
-| **Testing** | 68 automated tests (analytics invariants, security primitives, API RBAC/validation/i18n, CLI, config) + CI on SQLite *and* PostgreSQL |
+| **Testing** | 75 automated tests (analytics invariants, security primitives, API RBAC/validation/i18n, CLI, config) + CI on SQLite *and* PostgreSQL |
 
 ## Tech stack
 Python 3.12 · FastAPI · SQLAlchemy 2 · PostgreSQL / SQLite · Alembic · vanilla JS + Canvas (no build step) · Docker · GitHub Actions
@@ -64,7 +64,7 @@ pip install -r requirements-dev.txt
 python -m smarthealth.manage seed-demo          # fake data; prints demo logins once
 python -m uvicorn smarthealth.app:create_app --factory
 # open http://127.0.0.1:8000  -> admin / staff1 … staff8
-python -m pytest                                 # 68 tests
+python -m pytest                                 # 75 tests
 ```
 Set `SMARTHEALTH_DEMO_PASSWORD` before `seed-demo` to choose the demo password.
 
@@ -81,14 +81,20 @@ There are **no default accounts**. Production mode refuses to start without a st
 
 ## Project layout
 ```
-smarthealth/analytics.py   pure forecasting / redistribution / scoring (unit-tested)
-smarthealth/service.py     bulk-loads data (few queries, no N+1) and feeds analytics
-smarthealth/app.py         FastAPI app: auth, RBAC, validation, audit log, security headers
-smarthealth/manage.py      admin CLI (create admin/staff, facilities, medicines, passwords)
-migrations/                Alembic migrations (run automatically by the Docker entrypoint)
-static/                    dependency-free frontend (no build step)
-tests/                     68 tests: analytics, security, API/RBAC/validation/i18n, CLI, config
+smarthealth/
+  analytics.py     pure forecasting / redistribution / scoring (no I/O, fully unit-tested)
+  service.py       bulk-loads data (few queries, no N+1) and feeds analytics
+  presenters.py    turns computed state into translated JSON responses
+  deps.py          FastAPI dependencies: DB session, authentication, authorisation
+  routers/         thin HTTP layer: auth, reports (data entry), district, facilities, health
+  middleware.py    body-size limit, Host check, security headers
+  app.py           application factory that wires everything together
+  manage.py        admin CLI (create admin/staff, facilities, medicines, passwords)
+migrations/        Alembic migrations (run automatically by the Docker entrypoint)
+static/            dependency-free frontend as ES modules (js/state, dom, api, components, charts, views)
+tests/             75 tests: analytics, security, API/RBAC/validation/i18n, presenters, CLI, config
 ```
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the request flow and design decisions.
 
 ## Configuration
 All via environment variables — see [.env.example](.env.example). Analytics thresholds live in

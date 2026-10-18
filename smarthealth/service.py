@@ -10,8 +10,20 @@ from sqlalchemy.orm import Session
 
 from . import analytics, config
 from .models import (
-    BedStatus, DoctorAttendance, Facility, Footfall, Medicine, StockLog, TestAvailability,
+    BedStatus,
+    DoctorAttendance,
+    Facility,
+    Footfall,
+    Medicine,
+    StockLog,
+    TestAvailability,
 )
+
+FOOTFALL_WINDOW_DAYS = 17      # 3 recent days + 14 baseline days
+FOOTFALL_RECENT_DAYS = 3
+FOOTFALL_MIN_BASELINE_POINTS = 3
+BED_LOOKBACK_DAYS = 7
+ATTENDANCE_WINDOW_DAYS = 7
 
 
 @dataclass
@@ -23,8 +35,133 @@ class DistrictState:
     beds: dict[int, tuple[int, int] | None] = field(default_factory=dict)
     metrics: dict[int, analytics.FacilityMetrics] = field(default_factory=dict)
     flags: dict[int, analytics.FlagResult] = field(default_factory=dict)
-    footfall: dict[int, dict[date, int]] = field(default_factory=dict)  # last 17 days
+    footfall: dict[int, dict[date, int]] = field(default_factory=dict)
     tests: dict[int, list[tuple[str, bool]]] = field(default_factory=dict)
+
+
+@dataclass
+class _Signals:
+    """Raw per-facility inputs gathered from the database before scoring."""
+
+    critical: dict[int, int] = field(default_factory=lambda: defaultdict(int))
+    warning: dict[int, int] = field(default_factory=lambda: defaultdict(int))
+    last_report: dict[int, date] = field(default_factory=dict)
+    recent_footfall: dict[int, list[int]] = field(default_factory=lambda: defaultdict(list))
+    baseline_footfall: dict[int, list[int]] = field(default_factory=lambda: defaultdict(list))
+    present: dict[int, int] = field(default_factory=lambda: defaultdict(int))
+    rostered: dict[int, int] = field(default_factory=lambda: defaultdict(int))
+    tests_ok: dict[int, int] = field(default_factory=lambda: defaultdict(int))
+    tests_all: dict[int, int] = field(default_factory=lambda: defaultdict(int))
+
+    def seen(self, facility_id: int, day: date) -> None:
+        if day > self.last_report.get(facility_id, date.min):
+            self.last_report[facility_id] = day
+
+
+def _in_scope(district: str | None, facility_id: int | None):
+    query = select(Facility)
+    if facility_id is not None:
+        return query.where(Facility.id == facility_id)
+    if district:
+        return query.where(Facility.district == district)
+    return query
+
+
+def _load_stock(db: Session, state: DistrictState, signals: _Signals, ids: list[int], today: date) -> None:
+    history: dict[tuple[int, int], list[StockLog]] = defaultdict(list)
+    since = today - timedelta(days=config.HISTORY_DAYS)
+    rows = db.scalars(
+        select(StockLog)
+        .where(StockLog.facility_id.in_(ids), StockLog.day >= since, StockLog.day <= today)
+        .order_by(StockLog.day)
+    )
+    for log in rows:
+        history[(log.facility_id, log.medicine_id)].append(log)
+
+    for (facility_id, medicine_id), logs in history.items():
+        assessment = analytics.assess_stock(logs[-1].closing_qty, [float(x.consumed) for x in logs])
+        facility = state.facilities[facility_id]
+        state.assessments.append((facility_id, medicine_id, assessment))
+        state.positions.append(analytics.StockPosition(
+            facility_id, medicine_id, assessment.on_hand, assessment.daily_demand, facility.lat, facility.lon))
+        if assessment.level == "critical":
+            signals.critical[facility_id] += 1
+        elif assessment.level == "warning":
+            signals.warning[facility_id] += 1
+        signals.seen(facility_id, logs[-1].day)
+
+
+def _load_footfall(db: Session, state: DistrictState, signals: _Signals, ids: list[int], today: date) -> None:
+    recent_from = today - timedelta(days=FOOTFALL_RECENT_DAYS - 1)
+    rows = db.scalars(select(Footfall).where(
+        Footfall.facility_id.in_(ids),
+        Footfall.day >= today - timedelta(days=FOOTFALL_WINDOW_DAYS - 1), Footfall.day <= today))
+    for row in rows:
+        state.footfall[row.facility_id][row.day] = row.patients
+        bucket = signals.recent_footfall if row.day >= recent_from else signals.baseline_footfall
+        bucket[row.facility_id].append(row.patients)
+        signals.seen(row.facility_id, row.day)
+
+
+def _load_beds(db: Session, state: DistrictState, signals: _Signals, ids: list[int], today: date) -> None:
+    latest: dict[int, BedStatus] = {}
+    rows = db.scalars(
+        select(BedStatus)
+        .where(BedStatus.facility_id.in_(ids), BedStatus.day >= today - timedelta(days=BED_LOOKBACK_DAYS),
+               BedStatus.day <= today)
+        .order_by(BedStatus.day)
+    )
+    for row in rows:
+        latest[row.facility_id] = row
+        signals.seen(row.facility_id, row.day)
+    for facility_id in ids:
+        bed = latest.get(facility_id)
+        state.beds[facility_id] = (bed.total, bed.occupied) if bed else None
+
+
+def _load_attendance(db: Session, signals: _Signals, ids: list[int], today: date) -> None:
+    rows = db.scalars(select(DoctorAttendance).where(
+        DoctorAttendance.facility_id.in_(ids),
+        DoctorAttendance.day >= today - timedelta(days=ATTENDANCE_WINDOW_DAYS - 1),
+        DoctorAttendance.day <= today))
+    for row in rows:
+        signals.rostered[row.facility_id] += 1
+        signals.present[row.facility_id] += int(row.present)
+        signals.seen(row.facility_id, row.day)
+
+
+def _load_tests(db: Session, state: DistrictState, signals: _Signals, ids: list[int]) -> None:
+    for row in db.scalars(select(TestAvailability).where(TestAvailability.facility_id.in_(ids))):
+        state.tests[row.facility_id].append((row.test_name, row.available))
+        signals.tests_all[row.facility_id] += 1
+        signals.tests_ok[row.facility_id] += int(row.available)
+
+
+def _ratio(numerator: int, denominator: int) -> float | None:
+    return numerator / denominator if denominator else None
+
+
+def _footfall_ratio(signals: _Signals, facility_id: int) -> float | None:
+    """Mean of the last few days relative to the preceding baseline (None if too little data)."""
+    recent, baseline = signals.recent_footfall[facility_id], signals.baseline_footfall[facility_id]
+    if not recent or len(baseline) < FOOTFALL_MIN_BASELINE_POINTS:
+        return None
+    baseline_mean = sum(baseline) / len(baseline)
+    return (sum(recent) / len(recent)) / baseline_mean if baseline_mean else None
+
+
+def _metrics_for(state: DistrictState, signals: _Signals, facility_id: int, today: date) -> analytics.FacilityMetrics:
+    beds = state.beds[facility_id]
+    last = signals.last_report.get(facility_id)
+    return analytics.FacilityMetrics(
+        critical_stock=signals.critical[facility_id],
+        warning_stock=signals.warning[facility_id],
+        bed_occupancy=_ratio(beds[1], beds[0]) if beds else None,
+        attendance_rate=_ratio(signals.present[facility_id], signals.rostered[facility_id]),
+        test_availability=_ratio(signals.tests_ok[facility_id], signals.tests_all[facility_id]),
+        footfall_ratio=_footfall_ratio(signals, facility_id),
+        days_since_report=(today - last).days if last else config.HISTORY_DAYS,
+    )
 
 
 def compute_district(
@@ -34,112 +171,22 @@ def compute_district(
 
     `facility_id` narrows the scope to one centre; otherwise the whole district (or all).
     """
-    q = select(Facility)
-    if facility_id is not None:
-        q = q.where(Facility.id == facility_id)
-    elif district:
-        q = q.where(Facility.district == district)
-    facilities = {f.id: f for f in db.scalars(q)}
-    medicines = {m.id: m for m in db.scalars(select(Medicine))}
-    state = DistrictState(facilities, medicines)
+    facilities = {f.id: f for f in db.scalars(_in_scope(district, facility_id))}
+    state = DistrictState(facilities, {m.id: m for m in db.scalars(select(Medicine))})
     if not facilities:
         return state
+
     ids = list(facilities)
-
-    # ---- stock -------------------------------------------------------------
-    history: dict[tuple[int, int], list[StockLog]] = defaultdict(list)
-    since = today - timedelta(days=config.HISTORY_DAYS)
-    for log in db.scalars(
-        select(StockLog)
-        .where(StockLog.facility_id.in_(ids), StockLog.day >= since, StockLog.day <= today)
-        .order_by(StockLog.day)
-    ):
-        history[(log.facility_id, log.medicine_id)].append(log)
-
-    critical: dict[int, int] = defaultdict(int)
-    warning: dict[int, int] = defaultdict(int)
-    for (fid, mid), logs in history.items():
-        a = analytics.assess_stock(logs[-1].closing_qty, [float(x.consumed) for x in logs])
-        state.assessments.append((fid, mid, a))
-        f = facilities[fid]
-        state.positions.append(
-            analytics.StockPosition(fid, mid, a.on_hand, a.daily_demand, f.lat, f.lon)
-        )
-        if a.level == "critical":
-            critical[fid] += 1
-        elif a.level == "warning":
-            warning[fid] += 1
-
-    last_report: dict[int, date] = {}
-    for (fid, _), logs in history.items():
-        last_report[fid] = max(last_report.get(fid, logs[-1].day), logs[-1].day)
-
-    # ---- footfall ----------------------------------------------------------
     state.footfall = {fid: {} for fid in ids}
     state.tests = {fid: [] for fid in ids}
-    recent: dict[int, list[int]] = defaultdict(list)
-    prior: dict[int, list[int]] = defaultdict(list)
-    for r in db.scalars(
-        select(Footfall).where(
-            Footfall.facility_id.in_(ids),
-            Footfall.day >= today - timedelta(days=16), Footfall.day <= today,
-        )
-    ):
-        state.footfall[r.facility_id][r.day] = r.patients
-        (recent if r.day >= today - timedelta(days=2) else prior)[r.facility_id].append(r.patients)
-        last_report[r.facility_id] = max(last_report.get(r.facility_id, r.day), r.day)
+    signals = _Signals()
+    _load_stock(db, state, signals, ids, today)
+    _load_footfall(db, state, signals, ids, today)
+    _load_beds(db, state, signals, ids, today)
+    _load_attendance(db, signals, ids, today)
+    _load_tests(db, state, signals, ids)
 
-    # ---- beds (latest within a week) ----------------------------------------
-    latest_bed: dict[int, BedStatus] = {}
-    for r in db.scalars(
-        select(BedStatus)
-        .where(BedStatus.facility_id.in_(ids), BedStatus.day >= today - timedelta(days=7),
-               BedStatus.day <= today)
-        .order_by(BedStatus.day)
-    ):
-        latest_bed[r.facility_id] = r
-        last_report[r.facility_id] = max(last_report.get(r.facility_id, r.day), r.day)
-
-    # ---- attendance (7 days) -------------------------------------------------
-    present: dict[int, int] = defaultdict(int)
-    rostered: dict[int, int] = defaultdict(int)
-    for r in db.scalars(
-        select(DoctorAttendance).where(
-            DoctorAttendance.facility_id.in_(ids),
-            DoctorAttendance.day >= today - timedelta(days=6), DoctorAttendance.day <= today,
-        )
-    ):
-        rostered[r.facility_id] += 1
-        present[r.facility_id] += int(r.present)
-        last_report[r.facility_id] = max(last_report.get(r.facility_id, r.day), r.day)
-
-    # ---- diagnostic tests ----------------------------------------------------
-    tests_ok: dict[int, int] = defaultdict(int)
-    tests_all: dict[int, int] = defaultdict(int)
-    for r in db.scalars(select(TestAvailability).where(TestAvailability.facility_id.in_(ids))):
-        state.tests[r.facility_id].append((r.test_name, r.available))
-        tests_all[r.facility_id] += 1
-        tests_ok[r.facility_id] += int(r.available)
-
-    # ---- per-facility metrics and flags -------------------------------------------
     for fid in ids:
-        bed = latest_bed.get(fid)
-        state.beds[fid] = (bed.total, bed.occupied) if bed else None
-        base = sum(prior[fid]) / len(prior[fid]) if len(prior[fid]) >= 3 else None
-        ratio = (
-            (sum(recent[fid]) / len(recent[fid])) / base
-            if recent[fid] and base else None
-        )
-        last = last_report.get(fid)
-        m = analytics.FacilityMetrics(
-            critical_stock=critical[fid],
-            warning_stock=warning[fid],
-            bed_occupancy=(bed.occupied / bed.total) if bed and bed.total else None,
-            attendance_rate=(present[fid] / rostered[fid]) if rostered[fid] else None,
-            test_availability=(tests_ok[fid] / tests_all[fid]) if tests_all[fid] else None,
-            footfall_ratio=ratio,
-            days_since_report=(today - last).days if last else config.HISTORY_DAYS,
-        )
-        state.metrics[fid] = m
-        state.flags[fid] = analytics.score_facility(m)
+        state.metrics[fid] = _metrics_for(state, signals, fid, today)
+        state.flags[fid] = analytics.score_facility(state.metrics[fid])
     return state

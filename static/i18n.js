@@ -76,3 +76,7 @@ Object.assign(I18N.ta, {
   tests_status: "பரிசோதனைகள்", footfall_title: "நோயாளிகள் வருகை", days: "நாட்கள்", theme: "தீம்",
   welcome: "உள்நுழைந்தவர்:", distance: "கி.மீ தொலைவு", units_short: "அலகு", high: "உயர்", medium: "நடுத்தர",
 });
+
+Object.assign(I18N.en, { status: "Status" });
+Object.assign(I18N.hi, { status: "स्थिति" });
+Object.assign(I18N.ta, { status: "நிலை" });

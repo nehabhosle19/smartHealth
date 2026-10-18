@@ -1,5 +1,9 @@
 from smarthealth.security import (
-    LoginThrottle, create_token, decode_token, hash_password, verify_password,
+    LoginThrottle,
+    create_token,
+    decode_token,
+    hash_password,
+    verify_password,
 )
 
 

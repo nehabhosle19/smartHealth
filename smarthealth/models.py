@@ -4,8 +4,8 @@ from __future__ import annotations
 from datetime import date
 
 from sqlalchemy import Boolean, Date, Float, ForeignKey, Integer, String, UniqueConstraint
-from sqlalchemy.sql.expression import true
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.sql.expression import true
 
 
 class Base(DeclarativeBase):

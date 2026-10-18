@@ -14,13 +14,19 @@ from sqlalchemy.orm import Session
 
 from . import config
 from .models import (
-    BedStatus, DoctorAttendance, Facility, Footfall, Medicine, StockLog, TestAvailability, User,
+    BedStatus,
+    DoctorAttendance,
+    Facility,
+    Footfall,
+    Medicine,
+    StockLog,
+    TestAvailability,
+    User,
 )
 from .security import hash_password
 
 DISTRICT = "Demo District"
-# name, type, lat, lon, beds
-FACILITIES = [
+FACILITIES = [  # name, type, lat, lon, beds
     ("CHC Rampur", "CHC", 26.85, 80.95, 30),
     ("PHC Aliganj", "PHC", 26.90, 80.98, 6),
     ("PHC Bakshi", "PHC", 26.78, 80.90, 6),
@@ -38,73 +44,108 @@ MEDICINES = [  # name, unit, typical daily use at a PHC
 TESTS = ["Malaria RDT", "Hemoglobin", "Blood sugar", "Urine pregnancy", "HIV screening"]
 DOCTORS = ["Dr. Sharma", "Dr. Verma", "Dr. Khan"]
 
+# ---- deliberate problems, so the demo shows every feature -------------------------------
+DEFAULT_COVER_DAYS = 18
+OVERSTOCKED = {"CHC Rampur", "CHC Malihabad"}                     # donors for redistribution
+OVERSTOCK_COVER_DAYS = 45
+SHORT_STOCK_DAYS = {                                              # (facility, medicine) -> days of cover
+    ("PHC Bakshi", "Paracetamol 500mg"): 4, ("PHC Bakshi", "ORS sachets"): 4,
+    ("PHC Gosainganj", "Amoxicillin 250mg"): 2, ("PHC Gosainganj", "Metformin 500mg"): 2,
+    ("PHC Gosainganj", "Iron-folic acid"): 2,
+}
+FULL_BEDS = {"PHC Chinhat"}
+FOOTFALL_SURGE = {"PHC Chinhat": (1.8, 3)}                        # (multiplier, last N days)
+ABSENT_DOCTORS = {"PHC Aliganj", "PHC Mohanlal"}
+ABSENCE_RATE = 0.65
+MISSING_TESTS = {
+    "PHC Aliganj": set(TESTS[1:]), "PHC Gosainganj": set(TESTS[1:]), "PHC Bakshi": {"Malaria RDT"},
+}
+CHC_SCALE = 3.0           # a CHC serves roughly three PHCs' worth of patients
+DAILY_NOISE = 0.12        # stdev of daily consumption relative to its mean
+GROWTH_PER_DAY = 0.012    # gentle upward demand trend
+HISTORY_DAYS_FOR_BEDS_AND_ATTENDANCE = 7
+
+
+def _add_users(db: Session, facilities: list[Facility], password: str | None) -> dict[str, str]:
+    credentials: dict[str, str] = {}
+    accounts = [("admin", "admin", None)] + [(f"staff{f.id}", "staff", f.id) for f in facilities]
+    for username, role, facility_id in accounts:
+        plain = password or secrets.token_urlsafe(9)
+        credentials[username] = plain
+        db.add(User(username=username, role=role, facility_id=facility_id,
+                    password_hash=hash_password(plain, config.PBKDF2_ITERATIONS)))
+    return credentials
+
+
+def _closing_stock_today(facility: Facility, medicine: Medicine, base_daily_use: float) -> float:
+    if (facility.name, medicine.name) in SHORT_STOCK_DAYS:
+        return base_daily_use * SHORT_STOCK_DAYS[(facility.name, medicine.name)]
+    cover = OVERSTOCK_COVER_DAYS if facility.name in OVERSTOCKED else DEFAULT_COVER_DAYS
+    return base_daily_use * cover
+
+
+def _stock_history(db: Session, rng: random.Random, facility: Facility, medicine: Medicine,
+                   daily_use: int, scale: float, today: date, days: int) -> None:
+    base = daily_use * scale * rng.uniform(0.8, 1.2)
+    usage = [
+        (today - timedelta(days=d),
+         max(0, round(rng.gauss(base, base * DAILY_NOISE) * (1 + GROWTH_PER_DAY * (days - d)))))
+        for d in range(days - 1, -1, -1)
+    ]
+    closing = round(_closing_stock_today(facility, medicine, base))
+    for day, used in reversed(usage):  # walk backwards so today's closing stock hits the scenario
+        db.add(StockLog(facility_id=facility.id, medicine_id=medicine.id, day=day,
+                        closing_qty=max(0, closing), consumed=used))
+        closing += used
+
+
+def _daily_activity(db: Session, rng: random.Random, facility: Facility, beds_total: int,
+                    scale: float, today: date, days: int) -> None:
+    surge, surge_days = FOOTFALL_SURGE.get(facility.name, (1.0, 0))
+    for d in range(days):
+        day = today - timedelta(days=d)
+        patients = round(rng.gauss(60 * scale, 8) * (surge if d < surge_days else 1.0))
+        db.add(Footfall(facility_id=facility.id, day=day, patients=patients))
+        if d < HISTORY_DAYS_FOR_BEDS_AND_ATTENDANCE:
+            _beds_and_attendance(db, rng, facility, beds_total, day)
+
+
+def _beds_and_attendance(db: Session, rng: random.Random, facility: Facility, beds_total: int, day: date) -> None:
+    occupied = beds_total if facility.name in FULL_BEDS else round(beds_total * rng.uniform(0.4, 0.8))
+    db.add(BedStatus(facility_id=facility.id, day=day, total=beds_total, occupied=occupied))
+    for doctor in DOCTORS[: 3 if facility.type == "CHC" else 2]:
+        absent = facility.name in ABSENT_DOCTORS and rng.random() < ABSENCE_RATE
+        db.add(DoctorAttendance(facility_id=facility.id, doctor_name=doctor, day=day, present=not absent))
+
+
+def _test_audits(db: Session, facility: Facility, today: date) -> None:
+    missing = MISSING_TESTS.get(facility.name, set())
+    for test in TESTS:
+        db.add(TestAvailability(facility_id=facility.id, test_name=test,
+                                available=test not in missing, audited_on=today))
+
 
 def seed(db: Session, today: date, days: int = 30, password: str | None = None,
          seed_value: int = 7) -> dict[str, str]:
     """Populate the database; returns {username: password}. Refuses to seed twice."""
     if db.scalar(select(Facility.id).limit(1)) is not None:
         raise RuntimeError("database already contains data")
-    rng = random.Random(seed_value)
-    iters = config.PBKDF2_ITERATIONS
-    creds: dict[str, str] = {}
+    rng = random.Random(seed_value)  # noqa: S311 - deterministic demo data, not security-sensitive
 
-    def add_user(username: str, role: str, facility_id: int | None) -> None:
-        pw = password or secrets.token_urlsafe(9)
-        creds[username] = pw
-        db.add(User(username=username, password_hash=hash_password(pw, iters),
-                    role=role, facility_id=facility_id))
-
-    facilities = [Facility(name=n, type=t, district=DISTRICT, lat=la, lon=lo)
-                  for n, t, la, lo, _ in FACILITIES]
-    meds = [Medicine(name=n, unit=u) for n, u, _ in MEDICINES]
-    db.add_all(facilities + meds)
+    facilities = [Facility(name=n, type=t, district=DISTRICT, lat=la, lon=lo) for n, t, la, lo, _ in FACILITIES]
+    medicines = [Medicine(name=n, unit=u) for n, u, _ in MEDICINES]
+    db.add_all(facilities + medicines)
     db.flush()
+    credentials = _add_users(db, facilities, password)
 
-    add_user("admin", "admin", None)
-    for f in facilities:
-        add_user("staff" + str(f.id), "staff", f.id)
-
-    for idx, f in enumerate(facilities):
-        beds_total = FACILITIES[idx][4]
-        scale = 3.0 if f.type == "CHC" else 1.0
-        for mi, m in enumerate(meds):
-            base = MEDICINES[mi][2] * scale * rng.uniform(0.8, 1.2)
-            stock = base * (45 if idx in (0, 4) else 18)  # CHC Rampur/Malihabad over-stocked
-            if idx == 2 and mi in (0, 2):
-                stock = base * 4                           # Bakshi running low
-            if idx == 5 and mi in (1, 3, 4):
-                stock = base * 2                           # Gosainganj near stock-out
-            history = []
-            for d in range(days - 1, -1, -1):
-                use = max(0, round(rng.gauss(base, base * 0.12) * (1 + 0.012 * (days - d))))
-                history.append((today - timedelta(days=d), use))
-            # work backwards so today's closing stock equals the scenario stock
-            closing = round(stock)
-            rows = []
-            for day, use in reversed(history):
-                rows.append(StockLog(facility_id=f.id, medicine_id=m.id, day=day,
-                                     closing_qty=max(0, closing), consumed=use))
-                closing += use
-            db.add_all(rows)
-
-        for d in range(days):
-            day = today - timedelta(days=d)
-            surge = 1.8 if (idx == 3 and d < 3) else 1.0
-            db.add(Footfall(facility_id=f.id, day=day,
-                            patients=round(rng.gauss(60 * scale, 8) * surge)))
-            if d < 7:
-                occ = beds_total if idx == 3 else round(beds_total * rng.uniform(0.4, 0.8))
-                db.add(BedStatus(facility_id=f.id, day=day, total=beds_total, occupied=occ))
-                for doc in DOCTORS[: 3 if f.type == "CHC" else 2]:
-                    absent = idx in (1, 6) and rng.random() < 0.65
-                    db.add(DoctorAttendance(facility_id=f.id, doctor_name=doc, day=day,
-                                            present=not absent))
-        for ti, test in enumerate(TESTS):
-            ok = not (idx in (1, 5) and ti >= 1) and not (idx == 2 and ti == 0)
-            db.add(TestAvailability(facility_id=f.id, test_name=test, available=ok,
-                                    audited_on=today))
+    for facility, (*_, beds_total) in zip(facilities, FACILITIES, strict=True):
+        scale = CHC_SCALE if facility.type == "CHC" else 1.0
+        for medicine, (*_, daily_use) in zip(medicines, MEDICINES, strict=True):
+            _stock_history(db, rng, facility, medicine, daily_use, scale, today, days)
+        _daily_activity(db, rng, facility, beds_total, scale, today, days)
+        _test_audits(db, facility, today)
     db.commit()
-    return creds
+    return credentials
 
 
 if __name__ == "__main__":

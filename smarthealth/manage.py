@@ -17,6 +17,7 @@ import getpass
 import os
 import re
 import sys
+from collections.abc import Callable
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -27,16 +28,19 @@ from .models import Base, Facility, Medicine, User
 from .security import hash_password
 
 USERNAME_RE = re.compile(r"^[A-Za-z0-9._@-]{3,64}$")
+FACILITY_TYPES = ("PHC", "CHC")
 
 
 class CliError(Exception):
     """A user-facing error: printed without a traceback."""
 
 
+# --------------------------------------------------------------------------- domain operations
 def check_password(password: str) -> None:
     if len(password) < config.MIN_PASSWORD_LENGTH:
         raise CliError(f"password must be at least {config.MIN_PASSWORD_LENGTH} characters")
-    if password.lower() == password or password.upper() == password or not any(c.isdigit() for c in password):
+    mixed_case = password.lower() != password and password.upper() != password
+    if not (mixed_case and any(c.isdigit() for c in password)):
         raise CliError("password must mix upper- and lower-case letters and include a digit")
 
 
@@ -64,7 +68,7 @@ def create_staff(db: Session, username: str, password: str, facility_id: int) ->
 
 
 def add_facility(db: Session, name: str, type_: str, district: str, lat: float, lon: float) -> Facility:
-    if type_ not in ("PHC", "CHC"):
+    if type_ not in FACILITY_TYPES:
         raise CliError("type must be PHC or CHC")
     if not (-90 <= lat <= 90 and -180 <= lon <= 180):
         raise CliError("latitude/longitude out of range")
@@ -104,68 +108,113 @@ def set_active(db: Session, username: str, active: bool) -> None:
     db.commit()
 
 
-def _read_password(confirm: bool = True) -> str:
-    env = os.getenv("SMARTHEALTH_PASSWORD")
-    if env:
-        return env
+def _read_password() -> str:
+    from_env = os.getenv("SMARTHEALTH_PASSWORD")
+    if from_env:
+        return from_env
     first = getpass.getpass("Password: ")
-    if confirm and first != getpass.getpass("Repeat password: "):
+    if first != getpass.getpass("Repeat password: "):
         raise CliError("passwords do not match")
     return first
 
 
-def main(argv: list[str] | None = None) -> int:
+# --------------------------------------------------------------------------- command handlers
+# Each handler takes (db, parsed args) and returns the message to print.
+def _cmd_create_admin(db: Session, args) -> str:
+    create_admin(db, args.username, _read_password())
+    return "admin created"
+
+
+def _cmd_create_staff(db: Session, args) -> str:
+    create_staff(db, args.username, _read_password(), args.facility_id)
+    return "staff user created"
+
+
+def _cmd_add_facility(db: Session, args) -> str:
+    facility = add_facility(db, args.name, args.type, args.district, args.lat, args.lon)
+    return f"facility created with id {facility.id}"
+
+
+def _cmd_add_medicine(db: Session, args) -> str:
+    return f"medicine created with id {add_medicine(db, args.name, args.unit).id}"
+
+
+def _cmd_set_password(db: Session, args) -> str:
+    set_password(db, args.username, _read_password())
+    return "password updated; sessions revoked"
+
+
+def _cmd_deactivate(db: Session, args) -> str:
+    set_active(db, args.username, False)
+    return "user deactivated"
+
+
+def _cmd_activate(db: Session, args) -> str:
+    set_active(db, args.username, True)
+    return "user activated"
+
+
+def _cmd_list_facilities(db: Session, args) -> str:
+    rows = db.scalars(select(Facility).order_by(Facility.id))
+    return "\n".join(f"{f.id:4d}  {f.type}  {f.name}  ({f.district})" for f in rows)
+
+
+def _cmd_seed_demo(db: Session, args) -> str:
+    if config.IS_PROD:
+        raise CliError("refusing to load demo data when SMARTHEALTH_ENV=production")
+    from .seed import seed  # imported lazily: demo code is not needed in production
+
+    Base.metadata.create_all(db.get_bind())
+    credentials = seed(db, config.local_today(), password=os.getenv("SMARTHEALTH_DEMO_PASSWORD"))
+    return "\n".join(f"{user:10s} {password}" for user, password in credentials.items())
+
+
+def _argument(*flags: str, **kwargs):
+    return (flags, kwargs)
+
+
+USERNAME = _argument("--username", required=True)
+COMMANDS: dict[str, tuple[Callable, list]] = {
+    "create-admin": (_cmd_create_admin, [USERNAME]),
+    "create-staff": (_cmd_create_staff, [USERNAME, _argument("--facility-id", type=int, required=True)]),
+    "add-facility": (_cmd_add_facility, [
+        _argument("--name", required=True), _argument("--type", required=True, choices=FACILITY_TYPES),
+        _argument("--district", required=True), _argument("--lat", type=float, required=True),
+        _argument("--lon", type=float, required=True)]),
+    "add-medicine": (_cmd_add_medicine, [_argument("--name", required=True), _argument("--unit", required=True)]),
+    "set-password": (_cmd_set_password, [USERNAME]),
+    "deactivate": (_cmd_deactivate, [USERNAME]),
+    "activate": (_cmd_activate, [USERNAME]),
+    "list-facilities": (_cmd_list_facilities, []),
+    "seed-demo": (_cmd_seed_demo, []),
+}
+
+
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="smarthealth.manage", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    sub = parser.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("init-db", help="create tables directly (development; production uses alembic)")
-    p = sub.add_parser("create-admin"); p.add_argument("--username", required=True)
-    p = sub.add_parser("create-staff"); p.add_argument("--username", required=True)
-    p.add_argument("--facility-id", type=int, required=True)
-    p = sub.add_parser("add-facility"); p.add_argument("--name", required=True)
-    p.add_argument("--type", required=True, choices=["PHC", "CHC"]); p.add_argument("--district", required=True)
-    p.add_argument("--lat", type=float, required=True); p.add_argument("--lon", type=float, required=True)
-    p = sub.add_parser("add-medicine"); p.add_argument("--name", required=True); p.add_argument("--unit", required=True)
-    p = sub.add_parser("set-password"); p.add_argument("--username", required=True)
-    p = sub.add_parser("deactivate"); p.add_argument("--username", required=True)
-    p = sub.add_parser("activate"); p.add_argument("--username", required=True)
-    sub.add_parser("list-facilities")
-    sub.add_parser("seed-demo", help="load fake demo data (refused in production)")
-    args = parser.parse_args(argv)
+    commands = parser.add_subparsers(dest="cmd", required=True)
+    commands.add_parser("init-db", help="create tables directly (development; production uses alembic)")
+    for name, (handler, arguments) in COMMANDS.items():
+        sub = commands.add_parser(name, help=(handler.__doc__ or "").strip() or None)
+        for flags, kwargs in arguments:
+            sub.add_argument(*flags, **kwargs)
+    return parser
 
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
     engine = make_engine()
     try:
         if args.cmd == "init-db":
             Base.metadata.create_all(engine)
             print("tables created")
             return 0
+        handler = COMMANDS[args.cmd][0]
         with make_session_factory(engine)() as db:
-            if args.cmd == "create-admin":
-                create_admin(db, args.username, _read_password()); print("admin created")
-            elif args.cmd == "create-staff":
-                create_staff(db, args.username, _read_password(), args.facility_id); print("staff user created")
-            elif args.cmd == "add-facility":
-                f = add_facility(db, args.name, args.type, args.district, args.lat, args.lon)
-                print(f"facility created with id {f.id}")
-            elif args.cmd == "add-medicine":
-                m = add_medicine(db, args.name, args.unit); print(f"medicine created with id {m.id}")
-            elif args.cmd == "set-password":
-                set_password(db, args.username, _read_password()); print("password updated; sessions revoked")
-            elif args.cmd in ("deactivate", "activate"):
-                set_active(db, args.username, args.cmd == "activate"); print(f"user {args.cmd}d")
-            elif args.cmd == "list-facilities":
-                for f in db.scalars(select(Facility).order_by(Facility.id)):
-                    print(f"{f.id:4d}  {f.type}  {f.name}  ({f.district})")
-            elif args.cmd == "seed-demo":
-                if config.IS_PROD:
-                    raise CliError("refusing to load demo data when SMARTHEALTH_ENV=production")
-                from .seed import seed
-                Base.metadata.create_all(engine)
-                for user, pw in seed(db, config.local_today(),
-                                     password=os.getenv("SMARTHEALTH_DEMO_PASSWORD")).items():
-                    print(f"{user:10s} {pw}")
-    except CliError as e:
-        print(f"error: {e}", file=sys.stderr)
+            print(handler(db, args))
+    except CliError as error:
+        print(f"error: {error}", file=sys.stderr)
         return 1
     return 0
 
