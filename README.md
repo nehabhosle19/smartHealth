@@ -8,7 +8,7 @@
 > flags the centres that need intervention. Multilingual: English, हिन्दी, தமிழ்.
 
 ## 🔗 Live demo
-**https://YOUR-APP.onrender.com** *(free hosting – the first load can take ~30-60 s while it wakes up)*
+**[https://YOUR-APP.onrender.com](https://smarthealth-xbcw.onrender.com/)** *(free hosting – the first load can take ~30-60 s while it wakes up)*
 
 | Role | Username | Password |
 |---|---|---|
