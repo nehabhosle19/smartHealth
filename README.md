@@ -1,6 +1,6 @@
 # Smart Health – AI-driven Health Centre & Supply Chain Management
 
-![CI](https://github.com/YOUR-USER/YOUR-REPO/actions/workflows/ci.yml/badge.svg)
+[![CI](https://github.com/nehabhosle19/smartHealth/actions/workflows/ci.yml/badge.svg)](https://github.com/nehabhosle19/smartHealth/actions/workflows/ci.yml)
 
 > PHCs and CHCs run out of medicine, fill up on beds and lose doctors to absence — and nobody
 > notices until patients are turned away. **Smart Health** gives a district administrator one live
