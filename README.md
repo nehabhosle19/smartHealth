@@ -1,11 +1,54 @@
-# Smart Health – AI-driven PHC/CHC management
+# Smart Health – AI-driven Health Centre & Supply Chain Management
 
-Real-time monitoring for a district's health centres: medicine stock, patient footfall, beds,
-doctor attendance and diagnostic-test availability — with early stock-out warnings, demand
-forecasts, redistribution recommendations and automatic flagging of under-resourced centres to
-district administrators. UI and alerts in English, Hindi and Tamil; light and dark themes.
+![CI](https://github.com/YOUR-USER/YOUR-REPO/actions/workflows/ci.yml/badge.svg)
 
-![CI](../../actions/workflows/ci.yml/badge.svg)
+> PHCs and CHCs run out of medicine, fill up on beds and lose doctors to absence — and nobody
+> notices until patients are turned away. **Smart Health** gives a district administrator one live
+> view of every centre, warns *before* stock runs out, recommends where to move supplies from, and
+> flags the centres that need intervention. Multilingual: English, हिन्दी, தமிழ்.
+
+## 🔗 Live demo
+**https://YOUR-APP.onrender.com** *(free hosting – the first load can take ~30-60 s while it wakes up)*
+
+| Role | Username | Password |
+|---|---|---|
+| District administrator | `admin` | `YOUR-DEMO-PASSWORD` |
+| Centre staff (PHC Aliganj…) | `staff1` … `staff8` | `YOUR-DEMO-PASSWORD` |
+
+Demo data is fictional. Try: dashboard → flagged centres → stock-out warnings → redistribution →
+switch language (top right) → log in as `staff1` and report today's stock.
+
+## Screenshots
+| District dashboard | Demand forecast |
+|---|---|
+| ![Dashboard](docs/screenshots/dashboard.png) | ![Forecast](docs/screenshots/forecast.png) |
+| **Hindi UI** | **Dark mode** |
+| ![Hindi](docs/screenshots/dashboard-hindi.png) | ![Dark](docs/screenshots/dashboard-dark.png) |
+
+## Problem → solution
+| Requirement | How Smart Health delivers it |
+|---|---|
+| Stock monitoring | Daily closing stock and consumption per medicine per centre |
+| Patient footfall | Daily counts, 14-day trend chart, surge detection |
+| Bed availability | Occupancy per centre and district-wide; ≥ 85 % raises a flag reason |
+| Doctor attendance | 7-day attendance rate per centre |
+| Test availability audits | Per-test audit; missing tests shown on every centre row |
+| Early stock-out warnings | Days-of-cover from forecast demand: critical < 3 d, warning < 7 d, plus suggested reorder |
+| AI demand forecasts | Holt damped-trend exponential smoothing → 14-day forecast chart |
+| Smart redistribution | Greedy match of urgent shortages to the nearest centres with surplus; donors keep 21 days |
+| Auto-flag weak centres | Explainable 0-100 risk score with reasons; live banner on new high-severity centres |
+| Multilingual | UI and server-generated alerts in English, Hindi, Tamil |
+
+## Evaluation criteria
+| Criterion | What we did |
+|---|---|
+| **Code quality** | Pure, typed analytics module separated from I/O; Pydantic validation; ruff-clean; Alembic migrations; documented config |
+| **Security** | PBKDF2 passwords, HttpOnly SameSite cookies + CSRF header, role & per-facility authorisation, login throttling, strict input bounds, CSP/HSTS, audit log, fail-fast production config, dependency audit in CI – see [SECURITY.md](SECURITY.md) |
+| **Efficiency** | ~6 bulk queries per dashboard (no N+1), indexed columns, O(n) forecasting, no frontend build step or heavy libraries |
+| **Testing** | 68 automated tests (analytics invariants, security primitives, API RBAC/validation/i18n, CLI, config) + CI on SQLite *and* PostgreSQL |
+
+## Tech stack
+Python 3.12 · FastAPI · SQLAlchemy 2 · PostgreSQL / SQLite · Alembic · vanilla JS + Canvas (no build step) · Docker · GitHub Actions
 
 ## Features
 - **Stock monitoring & early warnings** – cover = stock ÷ forecast demand; *critical* < 3 days, *warning* < 7-day lead time, with a suggested reorder quantity.
